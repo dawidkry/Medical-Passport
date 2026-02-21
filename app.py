@@ -28,13 +28,12 @@ def secure_auth_system():
         
         if st.button("Log In", use_container_width=True):
             try:
-                # Sign in with Supabase
-                auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                supabase.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.authenticated = True
                 st.session_state.user_email = email
                 st.rerun()
             except Exception as e:
-                st.error("Login failed. Ensure you have confirmed your email in the Supabase Dashboard.")
+                st.error("Login failed. Check your credentials.")
 
         if st.button("Need an Account? Register"):
             st.session_state.auth_state = "signup"
@@ -48,7 +47,7 @@ def secure_auth_system():
         if st.button("Register", use_container_width=True):
             try:
                 supabase.auth.sign_up({"email": new_email, "password": new_pw})
-                st.success("Registration initiated! Please 'Confirm User' in your Supabase Dashboard to proceed.")
+                st.success("Registration initiated! Please confirm your email in Supabase.")
             except Exception as e:
                 st.error(f"Error: {e}")
         
@@ -58,7 +57,6 @@ def secure_auth_system():
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    # Sidebar Navigation
     st.sidebar.title("🧭 Navigation")
     st.sidebar.write(f"User: **{st.session_state.user_email}**")
     
@@ -71,54 +69,54 @@ def main_dashboard():
 
     if page == "Dashboard":
         st.title("🩺 Professional Medical Passport")
-        
-        # --- SENIORITY TRANSLATOR ---
         st.subheader("🌍 Global Seniority Mapping")
-        current_grade = st.selectbox(
-            "Select your current UK grade:",
-            ["FY1/FY2", "ST1/ST2 (IMT/CST)", "ST3-ST6 (Registrar)", "ST7-ST8", "Consultant"]
-        )
-
+        current_grade = st.selectbox("Select UK grade:", ["FY1/FY2", "ST1/ST2", "ST3-ST6", "ST7-ST8", "Consultant"])
+        
         mapping = {
-            "FY1/FY2": {"USA": "Intern / PGY-1", "Australia": "Intern / JMO"},
-            "ST1/ST2 (IMT/CST)": {"USA": "Resident (Junior)", "Australia": "SHO"},
-            "ST3-ST6 (Registrar)": {"USA": "Resident (Senior) / Fellow", "Australia": "Registrar"},
-            "ST7-ST8": {"USA": "Chief Resident / Fellow", "Australia": "Senior Registrar"},
-            "Consultant": {"USA": "Attending Physician", "Australia": "Consultant / VMO"}
+            "FY1/FY2": {"USA": "Intern", "Aus": "JMO"},
+            "ST1/ST2": {"USA": "Resident", "Aus": "SHO"},
+            "ST3-ST6": {"USA": "Fellow", "Aus": "Registrar"},
+            "ST7-ST8": {"USA": "Senior Fellow", "Aus": "Senior Registrar"},
+            "Consultant": {"USA": "Attending", "Aus": "Consultant"}
         }
-
         c1, c2 = st.columns(2)
-        with c1: st.metric("USA Equivalent", mapping[current_grade]["USA"])
-        with c2: st.metric("Australia Equivalent", mapping[current_grade]["Australia"])
-
-        st.divider()
-
-        # --- CV ENTRY ---
-        st.subheader("📜 Portfolio Vault")
-        with st.expander("➕ Add Qualification"):
-            q_name = st.text_input("Qualification (e.g., MRCP, USMLE Step 1)")
-            if st.button("Save to Vault"):
-                st.success(f"Verified entry for {q_name} added.")
+        c1.metric("USA", mapping[current_grade]["USA"])
+        c2.metric("Australia", mapping[current_grade]["Aus"])
 
     elif page == "Account Security":
-        st.title("🛡️ 2FA Security Settings")
-        st.write("Link your Microsoft Authenticator app to secure your clinical data.")
+        st.title("🛡️ MFA Setup")
+        
+        # --- SELF-HEALING LOGIC ---
+        # We check for existing factors every time this page loads
+        factors_res = supabase.auth.mfa.list_factors()
+        factors = factors_res.data.all if factors_res.data else []
+        
+        if factors:
+            st.warning(f"Found {len(factors)} pending/active security factor(s).")
+            if st.button("Clear All Factors & Reset"):
+                for f in factors:
+                    supabase.auth.mfa.unenroll(f.id)
+                st.success("System reset! You can now initialize a fresh 2FA setup.")
+                st.rerun()
 
         if st.button("Initialize 2FA Enrollment"):
             try:
+                # Force-clear any unverified factors first to avoid the 'Already exists' error
+                for f in factors:
+                    if f.status == "unverified":
+                        supabase.auth.mfa.unenroll(f.id)
+                
                 enroll = supabase.auth.mfa.enroll(factor_type='totp', friendly_name='Medical Passport')
                 st.session_state.mfa_id = enroll.data.id
                 st.session_state.qr_code = enroll.data.totp.qr_code
                 st.rerun()
             except Exception as e:
-                st.error("Enrollment already exists or failed. Clear MFA factors in Supabase if stuck.")
+                st.error(f"Enrollment Error: {e}")
 
         if 'qr_code' in st.session_state:
-            st.info("Step 1: Open Microsoft Authenticator and scan the code below.")
+            st.info("Scan with Microsoft Authenticator:")
             st.image(st.session_state.qr_code)
-            
-            st.info("Step 2: Enter the 6-digit verification code from your phone.")
-            otp_code = st.text_input("Enter Code", max_chars=6)
+            otp_code = st.text_input("6-Digit Code", max_chars=6)
             
             if st.button("Complete Verification"):
                 challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
@@ -128,10 +126,10 @@ def main_dashboard():
                     code=otp_code
                 )
                 if verify.data:
-                    st.success("MFA successfully activated! Your clinical records are now multi-factor protected.")
-                    del st.session_state.qr_code # Clean up UI
+                    st.success("MFA Active!")
+                    del st.session_state.qr_code
                 else:
-                    st.error("Verification failed. Please check the code.")
+                    st.error("Invalid code.")
 
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:

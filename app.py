@@ -2,22 +2,23 @@ import streamlit as st
 from supabase import create_client, Client
 
 # --- 1. CONFIGURATION & DATABASE CONNECTION ---
-# This pulls the keys from your Streamlit Cloud Secrets
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-st.set_page_config(page_title="Medical Passport", page_icon="🏥")
+st.set_page_config(page_title="Medical Passport", page_icon="🏥", layout="wide")
 
 # Initialize Session States
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'auth_state' not in st.session_state:
     st.session_state.auth_state = "login"
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = ""
 
 # --- 2. AUTHENTICATION SYSTEM ---
 def secure_auth_system():
-    st.title("🏥 Medical Passport")
+    st.title("🏥 Medical Passport Gateway")
     st.markdown("---")
 
     if st.session_state.auth_state == "login":
@@ -27,15 +28,15 @@ def secure_auth_system():
         
         if st.button("Log In", use_container_width=True):
             try:
-                # Actual Supabase Login
-                response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                # Sign in with Supabase
+                auth_response = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 st.session_state.authenticated = True
                 st.session_state.user_email = email
                 st.rerun()
             except Exception as e:
-                st.error("Login failed. Check your credentials or manual confirmation.")
+                st.error("Login failed. Ensure you have confirmed your email in the Supabase Dashboard.")
 
-        if st.button("Need an Account? Create one here"):
+        if st.button("Need an Account? Register"):
             st.session_state.auth_state = "signup"
             st.rerun()
 
@@ -47,7 +48,7 @@ def secure_auth_system():
         if st.button("Register", use_container_width=True):
             try:
                 supabase.auth.sign_up({"email": new_email, "password": new_pw})
-                st.success("Registration attempt complete! If you don't get an email, remember to 'Manually Confirm' in the Supabase Dashboard.")
+                st.success("Registration initiated! Please 'Confirm User' in your Supabase Dashboard to proceed.")
             except Exception as e:
                 st.error(f"Error: {e}")
         
@@ -57,60 +58,80 @@ def secure_auth_system():
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    # Sidebar for Logout and Profile
-    st.sidebar.title("Navigation")
-    st.sidebar.write(f"Logged in as: \n**{st.session_state.user_email}**")
-    if st.sidebar.button("Log Out"):
+    # Sidebar Navigation
+    st.sidebar.title("🧭 Navigation")
+    st.sidebar.write(f"User: **{st.session_state.user_email}**")
+    
+    page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
+    
+    if st.sidebar.button("Log Out", use_container_width=True):
         st.session_state.authenticated = False
+        st.session_state.user_email = ""
         st.rerun()
 
-    st.title("🩺 Professional Medical Passport")
-    
-    # --- SECTION A: SENIORITY TRANSLATOR ---
-    st.subheader("🌍 Global Seniority Mapping")
-    st.info("Translate your current grade to international equivalents.")
-    
-    current_grade = st.selectbox(
-        "Select your current grade (UK System):",
-        ["FY1/FY2", "ST1/ST2 (IMT/CST)", "ST3-ST6 (Registrar)", "ST7-ST8", "Consultant"]
-    )
-
-    # Mapping Logic
-    mapping = {
-        "FY1/FY2": {"USA": "Intern / PGY-1", "Australia": "Intern / JMO", "Role": "Junior Doctor"},
-        "ST1/ST2 (IMT/CST)": {"USA": "Resident (Junior)", "Australia": "SHO", "Role": "Specialty Trainee"},
-        "ST3-ST6 (Registrar)": {"USA": "Resident (Senior) / Fellow", "Australia": "Registrar", "Role": "Senior Registrar"},
-        "ST7-ST8": {"USA": "Chief Resident / Fellow", "Australia": "Senior Registrar", "Role": "Pre-Consultant"},
-        "Consultant": {"USA": "Attending Physician", "Australia": "Consultant / VMO", "Role": "Senior Specialist"}
-    }
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("USA Equivalent", mapping[current_grade]["USA"])
-    with col2:
-        st.metric("Australia Equivalent", mapping[current_grade]["Australia"])
-
-    st.markdown("---")
-
-    # --- SECTION B: CV & QUALIFICATIONS ---
-    st.subheader("📜 Verified Qualifications")
-    
-    with st.expander("➕ Add New Certificate / Qualification"):
-        q_name = st.text_input("Qualification Name (e.g. MRCP Part 1)")
-        q_date = st.date_input("Date Obtained")
-        q_body = st.text_input("Awarding Body (e.g. Royal College of Physicians)")
+    if page == "Dashboard":
+        st.title("🩺 Professional Medical Passport")
         
-        if st.button("Save to Passport"):
-            # This logic will save to your Supabase table 'qualifications'
-            st.success(f"Successfully added {q_name} to your digital vault.")
+        # --- SENIORITY TRANSLATOR ---
+        st.subheader("🌍 Global Seniority Mapping")
+        current_grade = st.selectbox(
+            "Select your current UK grade:",
+            ["FY1/FY2", "ST1/ST2 (IMT/CST)", "ST3-ST6 (Registrar)", "ST7-ST8", "Consultant"]
+        )
 
-    # Placeholder for displaying data
-    st.write("### Your Digital Portfolio")
-    st.table({
-        "Date": ["2024-01-15", "2023-06-10"],
-        "Qualification": ["MBBS", "ALS Provider"],
-        "Status": ["Verified ✅", "Verified ✅"]
-    })
+        mapping = {
+            "FY1/FY2": {"USA": "Intern / PGY-1", "Australia": "Intern / JMO"},
+            "ST1/ST2 (IMT/CST)": {"USA": "Resident (Junior)", "Australia": "SHO"},
+            "ST3-ST6 (Registrar)": {"USA": "Resident (Senior) / Fellow", "Australia": "Registrar"},
+            "ST7-ST8": {"USA": "Chief Resident / Fellow", "Australia": "Senior Registrar"},
+            "Consultant": {"USA": "Attending Physician", "Australia": "Consultant / VMO"}
+        }
+
+        c1, c2 = st.columns(2)
+        with c1: st.metric("USA Equivalent", mapping[current_grade]["USA"])
+        with c2: st.metric("Australia Equivalent", mapping[current_grade]["Australia"])
+
+        st.divider()
+
+        # --- CV ENTRY ---
+        st.subheader("📜 Portfolio Vault")
+        with st.expander("➕ Add Qualification"):
+            q_name = st.text_input("Qualification (e.g., MRCP, USMLE Step 1)")
+            if st.button("Save to Vault"):
+                st.success(f"Verified entry for {q_name} added.")
+
+    elif page == "Account Security":
+        st.title("🛡️ 2FA Security Settings")
+        st.write("Link your Microsoft Authenticator app to secure your clinical data.")
+
+        if st.button("Initialize 2FA Enrollment"):
+            try:
+                enroll = supabase.auth.mfa.enroll(factor_type='totp', friendly_name='Medical Passport')
+                st.session_state.mfa_id = enroll.data.id
+                st.session_state.qr_code = enroll.data.totp.qr_code
+                st.rerun()
+            except Exception as e:
+                st.error("Enrollment already exists or failed. Clear MFA factors in Supabase if stuck.")
+
+        if 'qr_code' in st.session_state:
+            st.info("Step 1: Open Microsoft Authenticator and scan the code below.")
+            st.image(st.session_state.qr_code)
+            
+            st.info("Step 2: Enter the 6-digit verification code from your phone.")
+            otp_code = st.text_input("Enter Code", max_chars=6)
+            
+            if st.button("Complete Verification"):
+                challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
+                verify = supabase.auth.mfa.verify(
+                    factor_id=st.session_state.mfa_id,
+                    challenge_id=challenge.data.id,
+                    code=otp_code
+                )
+                if verify.data:
+                    st.success("MFA successfully activated! Your clinical records are now multi-factor protected.")
+                    del st.session_state.qr_code # Clean up UI
+                else:
+                    st.error("Verification failed. Please check the code.")
 
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:

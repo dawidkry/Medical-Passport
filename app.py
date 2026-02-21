@@ -64,7 +64,7 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup & Management")
         
-        # --- FACTOR LIST & UNENROLL ---
+        # --- FACTOR AUDIT ---
         factors = []
         try:
             f_res = client.auth.mfa.list_factors()
@@ -75,15 +75,14 @@ def main_dashboard():
         if factors:
             for f in factors:
                 col_a, col_b = st.columns([3, 1])
-                col_a.write(f"**Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
-                if col_b.button("🗑️ Delete", key=f.id):
+                status_icon = "✅" if f.status == 'verified' else "⏳"
+                col_a.write(f"{status_icon} **Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
+                if col_b.button("🗑️ Reset", key=f.id):
                     try:
-                        # FIX: Pass as a dictionary, not a raw string
                         client.auth.mfa.unenroll({"factor_id": f.id})
-                        st.success("Factor removed.")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Unenrollment failed: {e}")
+                        st.error(f"Reset failed: {e}")
             st.divider()
 
         # --- ENROLLMENT ---
@@ -91,7 +90,7 @@ def main_dashboard():
             if st.button("Initialize New 2FA Enrollment"):
                 try:
                     enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
-                    st.session_state.mfa_id = enroll.id
+                    st.session_state.mfa_id = str(enroll.id)
                     st.session_state.qr_code = enroll.totp.qr_code
                     st.session_state.mfa_secret = enroll.totp.secret 
                     st.rerun()
@@ -103,7 +102,7 @@ def main_dashboard():
             st.divider()
             c1, c2 = st.columns(2)
             with c1:
-                st.image(st.session_state.qr_code, width=250)
+                st.image(st.session_state.qr_code, width=250, caption="Scan with Microsoft Authenticator")
             with c2:
                 st.info("Manual Key:")
                 st.code(st.session_state.get('mfa_secret', ""), language=None)
@@ -111,22 +110,26 @@ def main_dashboard():
             otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
-                    # 1. Challenge
+                    # 1. Generate the challenge
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
                     
-                    # 2. Extract ID safely
-                    if hasattr(challenge, 'id'): c_id = challenge.id
-                    elif isinstance(challenge, dict): c_id = challenge.get('id')
-                    else: c_id = challenge.data.id
-
-                    # 3. Verify (Using the dictionary format)
-                    client.auth.mfa.verify({
-                        "factor_id": st.session_state.mfa_id, 
-                        "challenge_id": c_id, 
-                        "code": str(otp)
-                    })
+                    # 2. Extract Challenge ID (Universal extraction)
+                    c_id = getattr(challenge, 'id', None)
+                    if not c_id and isinstance(challenge, dict):
+                        c_id = challenge.get('id')
                     
-                    st.success("✅ MFA Activated!")
+                    # 3. Final Verification Payload
+                    # This structure is designed to avoid the 'str' object attribute error
+                    verification_data = {
+                        "factor_id": str(st.session_state.mfa_id),
+                        "challenge_id": str(c_id),
+                        "code": str(otp).strip()
+                    }
+                    
+                    # Pass the dictionary as the single positional argument
+                    client.auth.mfa.verify(verification_data)
+                    
+                    st.success("✅ MFA Fully Activated!")
                     st.balloons()
                     st.session_state.pop('qr_code', None)
                     st.rerun()

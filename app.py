@@ -6,7 +6,7 @@ if 'auth_state' not in st.session_state:
     st.session_state.auth_state = "login" # Options: login, signup, recovery, 2fa
 
 def secure_auth_system():
-    st.title("Medical Passport: Secure Access")
+    st.title("Medical Passport")
     
     # --- LOGIN SCREEN ---
     if st.session_state.auth_state == "login":

@@ -56,7 +56,7 @@ def secure_auth_system():
     # --- SIGN UP SCREEN ---
     elif st.session_state.auth_state == "signup":
         st.subheader("Create Medical Passport")
-        new_email = st.text_input("Work Email (NHS/Institution)")
+        new_email = st.text_input("Email")
         new_pw = st.text_input("Create Strong Password", type="password")
         confirm_pw = st.text_input("Confirm Password", type="password")
         

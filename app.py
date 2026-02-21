@@ -7,7 +7,6 @@ KEY = st.secrets["SUPABASE_KEY"]
 
 st.set_page_config(page_title="Medical Passport", page_icon="🏥", layout="wide")
 
-# Initialize Session States
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'access_token' not in st.session_state:
@@ -52,8 +51,6 @@ def main_dashboard():
     if page == "Dashboard":
         st.title("🩺 Medical Passport Dashboard")
         st.write(f"Secure session active for: {st.session_state.user_email}")
-        
-        # Security Status Check
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
@@ -66,32 +63,22 @@ def main_dashboard():
 
     elif page == "Account Security":
         st.title("🛡️ MFA Setup & Management")
-        
-        # --- FACTOR AUDIT ---
         factors = []
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
-        except Exception as e:
-            st.error("Could not retrieve security factors.")
+        except:
+            st.error("Could not retrieve factors.")
 
         if factors:
-            st.info(f"The system found {len(factors)} existing security factor(s).")
             for f in factors:
                 col_a, col_b = st.columns([3, 1])
                 col_a.write(f"**Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
-                if col_b.button("🗑️ Delete/Reset", key=f.id):
-                    try:
-                        client.auth.mfa.unenroll(f.id)
-                        st.success("Factor removed.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Reset failed: {e}")
-            
+                if col_b.button("🗑️ Delete", key=f.id):
+                    client.auth.mfa.unenroll(f.id)
+                    st.rerun()
             st.divider()
-            st.write("If the status is **'Unverified'**, delete it above and try again.")
 
-        # Only show enrollment if no factors exist
         if not factors:
             if st.button("Initialize New 2FA Enrollment"):
                 try:
@@ -103,37 +90,23 @@ def main_dashboard():
                 except Exception as e:
                     st.error(f"Enrollment Error: {e}")
 
-        # Verification UI (if we have an active enrollment in session)
         if st.session_state.get('qr_code'):
             st.divider()
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("### Scan QR")
+            c1, c2 = st.columns(2)
+            with c1:
                 st.image(st.session_state.qr_code, width=250)
-            with col2:
-                st.write("### Manual Key")
+            with c2:
                 st.code(st.session_state.get('mfa_secret', ""), language=None)
             
             otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
-                    
-                    # Safe ID extraction
-                    if hasattr(challenge, 'id'): c_id = challenge.id
-                    elif isinstance(challenge, dict): c_id = challenge.get('id')
-                    else: c_id = challenge.data.id
-
-                    client.auth.mfa.verify({
-                        "factor_id": st.session_state.mfa_id,
-                        "challenge_id": c_id,
-                        "code": str(otp)
-                    })
-                    
+                    c_id = getattr(challenge, 'id', getattr(challenge, 'data', challenge).id if not hasattr(challenge, 'id') else None)
+                    client.auth.mfa.verify({"factor_id": st.session_state.mfa_id, "challenge_id": c_id, "code": str(otp)})
                     st.success("✅ MFA Activated!")
                     st.balloons()
                     st.session_state.pop('qr_code', None)
-                    st.session_state.pop('mfa_secret', None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Verification Failed: {e}")
@@ -141,7 +114,5 @@ def main_dashboard():
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:
     secure_auth_system()
-else:
-    main_dashboard()
 else:
     main_dashboard()

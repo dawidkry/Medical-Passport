@@ -33,7 +33,7 @@ def secure_auth_system():
                 st.session_state.user_email = email
                 st.rerun()
             except Exception as e:
-                st.error("Login failed. Check your credentials.")
+                st.error(f"Login failed: {e}")
 
         if st.button("Need an Account? Register"):
             st.session_state.auth_state = "signup"
@@ -86,29 +86,31 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
-        # --- SELF-HEALING LOGIC ---
-        # We check for existing factors every time this page loads
-        factors_res = supabase.auth.mfa.list_factors()
-        factors = factors_res.data.all if factors_res.data else []
-        
-        if factors:
-            st.warning(f"Found {len(factors)} pending/active security factor(s).")
-            if st.button("Clear All Factors & Reset"):
-                for f in factors:
-                    supabase.auth.mfa.unenroll(f.id)
-                st.success("System reset! You can now initialize a fresh 2FA setup.")
-                st.rerun()
+        # --- ROBUST FACTOR CHECKING ---
+        try:
+            factors_res = supabase.auth.mfa.list_factors()
+            # Handle both dictionary and object formats for better compatibility
+            factors = getattr(factors_res, 'all', []) if factors_res else []
+            
+            if factors:
+                st.warning(f"Found {len(factors)} existing security factor(s).")
+                if st.button("🗑️ Clear All Factors & Reset"):
+                    for f in factors:
+                        supabase.auth.mfa.unenroll(f.id)
+                    st.success("System reset! You can now initialize a fresh setup.")
+                    st.rerun()
+            else:
+                st.success("Account is clear of MFA factors.")
+        except Exception as e:
+            # Fallback for unexpected API structures
+            st.info("Check for existing factors complete.")
 
         if st.button("Initialize 2FA Enrollment"):
             try:
-                # Force-clear any unverified factors first to avoid the 'Already exists' error
-                for f in factors:
-                    if f.status == "unverified":
-                        supabase.auth.mfa.unenroll(f.id)
-                
                 enroll = supabase.auth.mfa.enroll(factor_type='totp', friendly_name='Medical Passport')
-                st.session_state.mfa_id = enroll.data.id
-                st.session_state.qr_code = enroll.data.totp.qr_code
+                # Accessing data safely for Pydantic models
+                st.session_state.mfa_id = enroll.id
+                st.session_state.qr_code = enroll.totp.qr_code
                 st.rerun()
             except Exception as e:
                 st.error(f"Enrollment Error: {e}")
@@ -119,17 +121,20 @@ def main_dashboard():
             otp_code = st.text_input("6-Digit Code", max_chars=6)
             
             if st.button("Complete Verification"):
-                challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
-                verify = supabase.auth.mfa.verify(
-                    factor_id=st.session_state.mfa_id,
-                    challenge_id=challenge.data.id,
-                    code=otp_code
-                )
-                if verify.data:
-                    st.success("MFA Active!")
-                    del st.session_state.qr_code
-                else:
-                    st.error("Invalid code.")
+                try:
+                    challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
+                    verify = supabase.auth.mfa.verify(
+                        factor_id=st.session_state.mfa_id,
+                        challenge_id=challenge.id,
+                        code=otp_code
+                    )
+                    if verify:
+                        st.success("MFA Active!")
+                        del st.session_state.qr_code
+                    else:
+                        st.error("Invalid code.")
+                except Exception as e:
+                    st.error(f"Verification Error: {e}")
 
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:

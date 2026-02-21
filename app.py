@@ -1,5 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
+from supabase.lib.client_options import ClientOptions  # <-- New Import
 
 # --- 1. CONFIGURATION ---
 URL = st.secrets["SUPABASE_URL"]
@@ -22,8 +23,9 @@ def secure_auth_system():
     password = st.text_input("Password", type="password")
     
     if st.button("Log In", use_container_width=True):
-        temp_client = create_client(URL, KEY)
         try:
+            # Simple client for initial login
+            temp_client = create_client(URL, KEY)
             res = temp_client.auth.sign_in_with_password({"email": email, "password": password})
             if res.session:
                 st.session_state.access_token = res.session.access_token
@@ -35,8 +37,13 @@ def secure_auth_system():
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    # Create the authenticated client with headers
-    client = create_client(URL, KEY, options={"headers": {"Authorization": f"Bearer {st.session_state.access_token}"}})
+    # Properly format the options object
+    opts = ClientOptions(headers={"Authorization": f"Bearer {st.session_state.access_token}"})
+    
+    # Create the authenticated client
+    client = create_client(URL, KEY, options=opts)
+    
+    # Force set the session into the client's auth memory
     client.auth.set_session(st.session_state.access_token, "")
 
     st.sidebar.title("🧭 Navigation")
@@ -57,10 +64,8 @@ def main_dashboard():
         if st.button("Generate 2FA QR Code"):
             try:
                 enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
-                
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
-                # WE CAPTURE THE SECRET KEY HERE FOR MANUAL ENTRY
                 st.session_state.mfa_secret = enroll.totp.secret 
                 st.rerun()
             except Exception as e:
@@ -76,10 +81,10 @@ def main_dashboard():
             
             with col2:
                 st.write("### Option 2: Manual Entry")
-                st.info("If the image is blurry, enter this code into Microsoft Authenticator:")
+                st.info("Manual Secret Key:")
                 st.code(st.session_state.mfa_secret, language=None)
                 st.write("**Account Name:** Medical Passport")
-                st.write("**Type:** Time-based (TOTP)")
+                st.write("**Type:** TOTP")
 
             st.divider()
             otp = st.text_input("Enter 6-Digit Code from App", max_chars=6)
@@ -93,7 +98,6 @@ def main_dashboard():
                         "code": otp
                     })
                     st.success("✅ MFA Activated!")
-                    # Cleanup session state after success
                     del st.session_state.qr_code
                     if 'mfa_secret' in st.session_state:
                         del st.session_state.mfa_secret

@@ -1,6 +1,5 @@
 import streamlit as st
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions  # <-- New Import
 
 # --- 1. CONFIGURATION ---
 URL = st.secrets["SUPABASE_URL"]
@@ -24,7 +23,7 @@ def secure_auth_system():
     
     if st.button("Log In", use_container_width=True):
         try:
-            # Simple client for initial login
+            # Standard client for login
             temp_client = create_client(URL, KEY)
             res = temp_client.auth.sign_in_with_password({"email": email, "password": password})
             if res.session:
@@ -37,14 +36,14 @@ def secure_auth_system():
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    # Properly format the options object
-    opts = ClientOptions(headers={"Authorization": f"Bearer {st.session_state.access_token}"})
+    # Create a standard client without complex options
+    client = create_client(URL, KEY)
     
-    # Create the authenticated client
-    client = create_client(URL, KEY, options=opts)
-    
-    # Force set the session into the client's auth memory
-    client.auth.set_session(st.session_state.access_token, "")
+    # Manually inject the session. This 'logs in' the client object.
+    try:
+        client.auth.set_session(st.session_state.access_token, "")
+    except Exception as e:
+        st.sidebar.error("Session refresh failed. Please log in again.")
 
     st.sidebar.title("🧭 Navigation")
     page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
@@ -61,9 +60,25 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
+        # Check for existing factors to allow reset
+        try:
+            f_res = client.auth.mfa.list_factors()
+            factors = getattr(f_res, 'all', [])
+            if factors:
+                st.warning(f"Active Factor: {factors[0].friendly_name}")
+                if st.button("Disable & Reset MFA"):
+                    client.auth.mfa.unenroll(factors[0].id)
+                    st.success("MFA removed. You can now re-enroll.")
+                    st.rerun()
+        except:
+            pass
+
         if st.button("Generate 2FA QR Code"):
             try:
+                # Simple dict enrollment
                 enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
+                
+                # Handle direct object attributes
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
                 st.session_state.mfa_secret = enroll.totp.secret 
@@ -82,6 +97,7 @@ def main_dashboard():
             with col2:
                 st.write("### Option 2: Manual Entry")
                 st.info("Manual Secret Key:")
+                # Use a cleaner display for the secret
                 st.code(st.session_state.mfa_secret, language=None)
                 st.write("**Account Name:** Medical Passport")
                 st.write("**Type:** TOTP")

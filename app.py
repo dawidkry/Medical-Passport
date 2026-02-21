@@ -13,6 +13,8 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'user_email' not in st.session_state:
     st.session_state.user_email = ""
+if 'access_token' not in st.session_state:
+    st.session_state.access_token = None
 
 # --- 2. AUTHENTICATION SYSTEM ---
 def secure_auth_system():
@@ -29,6 +31,8 @@ def secure_auth_system():
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 if res.session:
+                    # WE CAPTURE THE TOKEN HERE
+                    st.session_state.access_token = res.session.access_token
                     st.session_state.authenticated = True
                     st.session_state.user_email = email
                     st.rerun()
@@ -39,7 +43,7 @@ def secure_auth_system():
         if st.button("Register New Account", use_container_width=True):
             try:
                 supabase.auth.sign_up({"email": email, "password": password})
-                st.success("Registration sent! Check email/Supabase to confirm.")
+                st.success("Registration sent! Check Supabase to confirm the user.")
             except Exception as e:
                 st.error(f"Signup Error: {e}")
 
@@ -48,35 +52,31 @@ def main_dashboard():
     st.sidebar.title("🧭 Navigation")
     st.sidebar.write(f"Logged in: **{st.session_state.user_email}**")
     
-    # Check session health on every load
-    current_session = None
-    try:
-        session_res = supabase.auth.get_session()
-        current_session = session_res.session if session_res else None
-    except:
-        pass
-
     page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
     
     if st.sidebar.button("🚪 Log Out", use_container_width=True):
-        supabase.auth.sign_out()
+        try:
+            supabase.auth.sign_out()
+        except:
+            pass
         st.session_state.authenticated = False
         st.session_state.user_email = ""
+        st.session_state.access_token = None
         st.rerun()
 
     if page == "Dashboard":
         st.title("🩺 Professional Medical Passport")
-        st.info("Your clinical portfolio is secured.")
-        # Add your CV content here later
+        st.write("Welcome, Doctor. Your secure portal is active.")
 
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
-        if not current_session:
-            st.warning("⚠️ Session token is stale. Please Log Out and back in to refresh.")
-            return
+        # We manually set the session before making MFA calls
+        # This is the "Force Refresh" for the library
+        if st.session_state.access_token:
+            supabase.auth.set_session(st.session_state.access_token, "")
 
-        # Self-Healing: Check for 'ghost' factors
+        # Check for 'ghost' factors
         try:
             factors_res = supabase.auth.mfa.list_factors()
             factors = getattr(factors_res, 'all', [])
@@ -85,15 +85,18 @@ def main_dashboard():
                 if st.button("Reset / Unenroll"):
                     supabase.auth.mfa.unenroll(factors[0].id)
                     st.rerun()
-        except:
-            pass
+        except Exception as e:
+            # If we still get a session error here, it's a library state issue
+            st.warning("Unable to verify factors. Please try the 'Generate' button below.")
 
         if st.button("Generate 2FA QR Code"):
             try:
-                # Dict-style params for modern Supabase library
+                # Ensure session is set again right before the call
+                supabase.auth.set_session(st.session_state.access_token, "")
+                
                 enroll = supabase.auth.mfa.enroll({
                     "factor_type": "totp",
-                    "friendly_name": f"MedPassport-{st.session_state.user_email[:5]}"
+                    "friendly_name": "MedicalPassport"
                 })
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code

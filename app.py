@@ -9,48 +9,48 @@ URL = st.secrets["SUPABASE_URL"]
 KEY = st.secrets["SUPABASE_KEY"]
 client = create_client(URL, KEY)
 
+# Initialize Session State
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
-# --- 2. THE RECOVERY HANDLER (STRENGTHENED) ---
+# --- 2. THE RECOVERY HANDLER (PKCE COMPATIBLE) ---
 def handle_recovery():
-    # Capture URL parameters
     params = st.query_params
     
-    # Check if we are in recovery mode
-    if params.get("type") == "recovery":
+    # 1. Look for the 'code' parameter sent by Supabase PKCE
+    auth_code = params.get("code")
+    is_recovery = params.get("type") == "recovery"
+
+    if auth_code and is_recovery:
         st.title("🛡️ Reset Your Password")
-        st.info("Your identity has been verified via email. Please set your new password.")
+        st.info("Identity verified. Please enter your new clinical credentials.")
         
-        new_p = st.text_input("New Password", type="password", key="reset_p1")
-        conf_p = st.text_input("Confirm New Password", type="password", key="reset_p2")
+        new_p = st.text_input("New Password", type="password")
+        conf_p = st.text_input("Confirm New Password", type="password")
         
         if st.button("Update Password", use_container_width=True):
             if new_p == conf_p and len(new_p) >= 6:
                 try:
-                    # THE FIX: We ensure we are using the current session 
-                    # that was established by clicking the email link.
-                    res = client.auth.update_user({"password": new_p})
+                    # EXCHANGE THE CODE FOR A SESSION
+                    # This is the magic step that fixes 'Auth Session Missing'
+                    client.auth.exchange_code_for_session({"auth_code": auth_code})
                     
-                    if res:
-                        st.success("✅ Password updated! Redirecting to login...")
-                        st.balloons()
-                        time.sleep(3)
-                        # Clear URL and reset state
-                        st.query_params.clear()
-                        st.rerun()
+                    # NOW we have a session, so we can update the user
+                    client.auth.update_user({"password": new_p})
+                    
+                    st.success("✅ Password updated! Redirecting...")
+                    st.balloons()
+                    time.sleep(2)
+                    st.query_params.clear()
+                    st.rerun()
                 except Exception as e:
-                    # If the session expired, we provide a clear path back
-                    st.error(f"Session Expired: {e}")
-                    if st.button("Request New Link"):
-                        st.query_params.clear()
-                        st.rerun()
+                    st.error(f"Recovery failed: {e}")
             else:
-                st.error("Passwords must match and be at least 6 characters.")
+                st.error("Passwords must match and be 6+ characters.")
         return True
     return False
 
-# --- 3. LOGIN UI ---
+# --- 3. LOGIN SCREEN ---
 def login_screen():
     if handle_recovery():
         return
@@ -74,16 +74,15 @@ def login_screen():
         reset_email = st.text_input("Email")
         if st.button("Send Reset Link"):
             try:
-                # IMPORTANT: Use the exact URL as configured in Supabase
+                # We point back to our app and tell it we are in 'recovery' mode
                 actual_url = "https://medical-passport.streamlit.app" 
-                
                 client.auth.reset_password_for_email(
                     reset_email, 
                     options={"redirect_to": f"{actual_url}?type=recovery"}
                 )
-                st.success("Recovery link sent! Check your inbox.")
+                st.success("Recovery link sent! Check your email.")
             except Exception as e:
-                st.error(f"API Error: {e}")
+                st.error(f"Error: {e}")
 
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:

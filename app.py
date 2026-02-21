@@ -77,6 +77,7 @@ def main_dashboard():
                 status = "✅ Verified" if f.status == 'verified' else "⏳ Pending"
                 col_a.write(f"**Factor:** {f.friendly_name} | **Status:** {status}")
                 if col_b.button("🗑️ Reset", key=f.id):
+                    # Fixed earlier: encapsulated in dict
                     client.auth.mfa.unenroll({"factor_id": f.id})
                     st.rerun()
             st.divider()
@@ -96,7 +97,7 @@ def main_dashboard():
             st.divider()
             c1, c2 = st.columns(2)
             with c1:
-                st.image(st.session_state.qr_code, width=250, caption="Scan with Microsoft Authenticator")
+                st.image(st.session_state.qr_code, width=250, caption="Scan with Authenticator")
             with c2:
                 st.info("Manual Key:")
                 st.code(st.session_state.get('mfa_secret', ""), language=None)
@@ -104,27 +105,20 @@ def main_dashboard():
             otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
-                    # 1. Challenge
-                    challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
+                    # THE FIX IS HERE: We pass {"factor_id": ...} instead of just the string
+                    challenge = client.auth.mfa.challenge({"factor_id": st.session_state.mfa_id})
                     
-                    # 2. Extract ID with maximum redundancy
-                    # Some versions return an object, some a dict, some a string
-                    c_id = None
-                    if hasattr(challenge, 'id'): c_id = challenge.id
-                    elif isinstance(challenge, dict): c_id = challenge.get('id')
-                    elif isinstance(challenge, str): c_id = challenge
+                    # Extract Challenge ID 
+                    c_id = getattr(challenge, 'id', None)
+                    if not c_id and isinstance(challenge, dict):
+                        c_id = challenge.get('id')
                     
-                    if not c_id:
-                        st.error("Could not generate a security challenge. Please try resetting.")
-                        return
-
-                    # 3. VERIFY USING EXPLICIT KEYWORDS
-                    # This is the "Universal" call that avoids the 'str' object error
-                    client.auth.mfa.verify(
-                        factor_id=str(st.session_state.mfa_id),
-                        challenge_id=str(c_id),
-                        code=str(otp).strip()
-                    )
+                    # Verify using the dictionary format
+                    client.auth.mfa.verify({
+                        "factor_id": st.session_state.mfa_id,
+                        "challenge_id": c_id,
+                        "code": str(otp).strip()
+                    })
                     
                     st.success("✅ MFA Fully Activated!")
                     st.balloons()

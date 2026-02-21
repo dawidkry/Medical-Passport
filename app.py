@@ -47,7 +47,7 @@ def secure_auth_system():
         if st.button("Register", use_container_width=True):
             try:
                 supabase.auth.sign_up({"email": new_email, "password": new_pw})
-                st.success("Registration initiated! Please confirm your email in Supabase.")
+                st.success("Registration initiated! Confirm your email in Supabase.")
             except Exception as e:
                 st.error(f"Error: {e}")
         
@@ -69,70 +69,67 @@ def main_dashboard():
 
     if page == "Dashboard":
         st.title("🩺 Professional Medical Passport")
-        st.subheader("🌍 Global Seniority Mapping")
+        # --- SENIORITY METRICS ---
         current_grade = st.selectbox("Select UK grade:", ["FY1/FY2", "ST1/ST2", "ST3-ST6", "ST7-ST8", "Consultant"])
-        
-        mapping = {
-            "FY1/FY2": {"USA": "Intern", "Aus": "JMO"},
-            "ST1/ST2": {"USA": "Resident", "Aus": "SHO"},
-            "ST3-ST6": {"USA": "Fellow", "Aus": "Registrar"},
-            "ST7-ST8": {"USA": "Senior Fellow", "Aus": "Senior Registrar"},
-            "Consultant": {"USA": "Attending", "Aus": "Consultant"}
-        }
-        c1, c2 = st.columns(2)
-        c1.metric("USA", mapping[current_grade]["USA"])
-        c2.metric("Australia", mapping[current_grade]["Aus"])
+        mapping = {"FY1/FY2": "Intern", "ST1/ST2": "Resident", "ST3-ST6": "Fellow", "ST7-ST8": "Senior Fellow", "Consultant": "Attending"}
+        st.metric("Global Equivalent", mapping[current_grade])
 
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
-        # --- ROBUST FACTOR CHECKING ---
+        # Check for factors
         try:
             factors_res = supabase.auth.mfa.list_factors()
-            # Handle both dictionary and object formats for better compatibility
-            factors = getattr(factors_res, 'all', []) if factors_res else []
-            
+            factors = getattr(factors_res, 'all', [])
             if factors:
-                st.warning(f"Found {len(factors)} existing security factor(s).")
-                if st.button("🗑️ Clear All Factors & Reset"):
-                    for f in factors:
-                        supabase.auth.mfa.unenroll(f.id)
-                    st.success("System reset! You can now initialize a fresh setup.")
+                st.warning(f"Active Factor Found: {factors[0].friendly_name}")
+                if st.button("Reset MFA"):
+                    supabase.auth.mfa.unenroll(factors[0].id)
                     st.rerun()
-            else:
-                st.success("Account is clear of MFA factors.")
-        except Exception as e:
-            # Fallback for unexpected API structures
-            st.info("Check for existing factors complete.")
+        except:
+            pass
 
         if st.button("Initialize 2FA Enrollment"):
             try:
-                enroll = supabase.auth.mfa.enroll(factor_type='totp', friendly_name='Medical Passport')
-                # Accessing data safely for Pydantic models
-                st.session_state.mfa_id = enroll.id
-                st.session_state.qr_code = enroll.totp.qr_code
+                # NEW SYNTX: Passing parameters as a dictionary or positional 
+                # to satisfy the newer SyncGoTrueClient requirements
+                enroll = supabase.auth.mfa.enroll({
+                    "factor_type": "totp",
+                    "friendly_name": "Medical Passport"
+                })
+                
+                # Handling different response structures
+                data = getattr(enroll, 'data', enroll)
+                st.session_state.mfa_id = data.id
+                st.session_state.qr_code = data.totp.qr_code
                 st.rerun()
             except Exception as e:
-                st.error(f"Enrollment Error: {e}")
+                # Fallback: Trying positional arguments if dictionary fails
+                try:
+                    enroll = supabase.auth.mfa.enroll("totp", "Medical Passport")
+                    data = getattr(enroll, 'data', enroll)
+                    st.session_state.mfa_id = data.id
+                    st.session_state.qr_code = data.totp.qr_code
+                    st.rerun()
+                except Exception as e2:
+                    st.error(f"Critical Enrollment Error: {e2}")
 
         if 'qr_code' in st.session_state:
             st.info("Scan with Microsoft Authenticator:")
             st.image(st.session_state.qr_code)
             otp_code = st.text_input("6-Digit Code", max_chars=6)
             
-            if st.button("Complete Verification"):
+            if st.button("Verify Code"):
                 try:
                     challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
+                    c_data = getattr(challenge, 'data', challenge)
                     verify = supabase.auth.mfa.verify(
                         factor_id=st.session_state.mfa_id,
-                        challenge_id=challenge.id,
+                        challenge_id=c_data.id,
                         code=otp_code
                     )
-                    if verify:
-                        st.success("MFA Active!")
-                        del st.session_state.qr_code
-                    else:
-                        st.error("Invalid code.")
+                    st.success("MFA Active!")
+                    del st.session_state.qr_code
                 except Exception as e:
                     st.error(f"Verification Error: {e}")
 

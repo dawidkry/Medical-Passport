@@ -72,8 +72,6 @@ def main_dashboard():
         if st.button("Generate 2FA QR Code"):
             try:
                 enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
-                
-                # We carefully save every piece of data to session_state
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
                 st.session_state.mfa_secret = enroll.totp.secret 
@@ -81,36 +79,39 @@ def main_dashboard():
             except Exception as e:
                 st.error(f"Security Error: {e}")
 
-        # Use 'get' to check for existence safely
         if st.session_state.get('qr_code'):
             st.divider()
             col1, col2 = st.columns(2)
-            
             with col1:
                 st.write("### Option 1: Scan QR")
                 st.image(st.session_state.qr_code, width=300)
-            
             with col2:
                 st.write("### Option 2: Manual Entry")
-                st.info("Manual Secret Key:")
-                # Safe access to the secret
-                st.code(st.session_state.get('mfa_secret', "Not Found"), language=None)
-                st.write("**Account Name:** Medical Passport")
-                st.write("**Type:** TOTP")
+                st.code(st.session_state.get('mfa_secret', ""), language=None)
+                st.write("**Account:** Medical Passport")
 
             st.divider()
             otp = st.text_input("Enter 6-Digit Code from App", max_chars=6)
             
             if st.button("Verify & Activate"):
                 try:
+                    # 1. Create the challenge
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
-                    client.auth.mfa.verify({
-                        "factor_id": st.session_state.mfa_id,
-                        "challenge_id": challenge.id,
-                        "code": otp
-                    })
-                    st.success("✅ MFA Activated!")
-                    # Clean up
+                    
+                    # 2. Extract the challenge ID carefully
+                    challenge_id = getattr(challenge, 'id', None)
+                    
+                    # 3. Verify using the challenge ID and the OTP code
+                    # Passing them as separate arguments to avoid the 'str' object error
+                    client.auth.mfa.verify(
+                        factor_id=st.session_state.mfa_id,
+                        challenge_id=challenge_id,
+                        code=otp
+                    )
+                    
+                    st.success("✅ MFA Fully Activated!")
+                    st.balloons()
+                    # Clean up session state
                     st.session_state.pop('qr_code', None)
                     st.session_state.pop('mfa_secret', None)
                 except Exception as e:

@@ -23,7 +23,6 @@ def secure_auth_system():
     
     if st.button("Log In", use_container_width=True):
         try:
-            # Standard client for login
             temp_client = create_client(URL, KEY)
             res = temp_client.auth.sign_in_with_password({"email": email, "password": password})
             if res.session:
@@ -36,14 +35,12 @@ def secure_auth_system():
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    # Create a standard client without complex options
     client = create_client(URL, KEY)
     
-    # Manually inject the session. This 'logs in' the client object.
     try:
         client.auth.set_session(st.session_state.access_token, "")
     except Exception as e:
-        st.sidebar.error("Session refresh failed. Please log in again.")
+        st.sidebar.error("Session stale. Please log in again.")
 
     st.sidebar.title("🧭 Navigation")
     page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
@@ -60,7 +57,7 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
-        # Check for existing factors to allow reset
+        # Check for existing factors
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
@@ -68,17 +65,15 @@ def main_dashboard():
                 st.warning(f"Active Factor: {factors[0].friendly_name}")
                 if st.button("Disable & Reset MFA"):
                     client.auth.mfa.unenroll(factors[0].id)
-                    st.success("MFA removed. You can now re-enroll.")
                     st.rerun()
         except:
             pass
 
         if st.button("Generate 2FA QR Code"):
             try:
-                # Simple dict enrollment
                 enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
                 
-                # Handle direct object attributes
+                # We carefully save every piece of data to session_state
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
                 st.session_state.mfa_secret = enroll.totp.secret 
@@ -86,7 +81,8 @@ def main_dashboard():
             except Exception as e:
                 st.error(f"Security Error: {e}")
 
-        if 'qr_code' in st.session_state:
+        # Use 'get' to check for existence safely
+        if st.session_state.get('qr_code'):
             st.divider()
             col1, col2 = st.columns(2)
             
@@ -97,8 +93,8 @@ def main_dashboard():
             with col2:
                 st.write("### Option 2: Manual Entry")
                 st.info("Manual Secret Key:")
-                # Use a cleaner display for the secret
-                st.code(st.session_state.mfa_secret, language=None)
+                # Safe access to the secret
+                st.code(st.session_state.get('mfa_secret', "Not Found"), language=None)
                 st.write("**Account Name:** Medical Passport")
                 st.write("**Type:** TOTP")
 
@@ -114,9 +110,9 @@ def main_dashboard():
                         "code": otp
                     })
                     st.success("✅ MFA Activated!")
-                    del st.session_state.qr_code
-                    if 'mfa_secret' in st.session_state:
-                        del st.session_state.mfa_secret
+                    # Clean up
+                    st.session_state.pop('qr_code', None)
+                    st.session_state.pop('mfa_secret', None)
                 except Exception as e:
                     st.error(f"Verification Failed: {e}")
 

@@ -69,7 +69,6 @@ def main_dashboard():
 
     if page == "Dashboard":
         st.title("🩺 Professional Medical Passport")
-        # --- SENIORITY METRICS ---
         current_grade = st.selectbox("Select UK grade:", ["FY1/FY2", "ST1/ST2", "ST3-ST6", "ST7-ST8", "Consultant"])
         mapping = {"FY1/FY2": "Intern", "ST1/ST2": "Resident", "ST3-ST6": "Fellow", "ST7-ST8": "Senior Fellow", "Consultant": "Attending"}
         st.metric("Global Equivalent", mapping[current_grade])
@@ -77,58 +76,51 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
-        # Check for factors
+        # Check for existing factors
         try:
             factors_res = supabase.auth.mfa.list_factors()
-            factors = getattr(factors_res, 'all', [])
+            # Handle the response which might be a list directly or an object with an 'all' attribute
+            factors = getattr(factors_res, 'all', factors_res if isinstance(factors_res, list) else [])
             if factors:
                 st.warning(f"Active Factor Found: {factors[0].friendly_name}")
-                if st.button("Reset MFA"):
+                if st.button("Reset MFA (Unenroll)"):
                     supabase.auth.mfa.unenroll(factors[0].id)
+                    st.success("MFA factor removed.")
                     st.rerun()
         except:
             pass
 
         if st.button("Initialize 2FA Enrollment"):
             try:
-                # NEW SYNTX: Passing parameters as a dictionary or positional 
-                # to satisfy the newer SyncGoTrueClient requirements
-                enroll = supabase.auth.mfa.enroll({
+                # The "One-Vial" approach: Passing exactly ONE dictionary as the positional argument
+                params = {
                     "factor_type": "totp",
                     "friendly_name": "Medical Passport"
-                })
+                }
+                enroll = supabase.auth.mfa.enroll(params)
                 
-                # Handling different response structures
-                data = getattr(enroll, 'data', enroll)
-                st.session_state.mfa_id = data.id
-                st.session_state.qr_code = data.totp.qr_code
+                # Handling the return object (Pydantic style)
+                st.session_state.mfa_id = enroll.id
+                st.session_state.qr_code = enroll.totp.qr_code
                 st.rerun()
             except Exception as e:
-                # Fallback: Trying positional arguments if dictionary fails
-                try:
-                    enroll = supabase.auth.mfa.enroll("totp", "Medical Passport")
-                    data = getattr(enroll, 'data', enroll)
-                    st.session_state.mfa_id = data.id
-                    st.session_state.qr_code = data.totp.qr_code
-                    st.rerun()
-                except Exception as e2:
-                    st.error(f"Critical Enrollment Error: {e2}")
+                st.error(f"Enrollment Error: {e}")
 
         if 'qr_code' in st.session_state:
             st.info("Scan with Microsoft Authenticator:")
             st.image(st.session_state.qr_code)
             otp_code = st.text_input("6-Digit Code", max_chars=6)
             
-            if st.button("Verify Code"):
+            if st.button("Verify & Activate"):
                 try:
                     challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
-                    c_data = getattr(challenge, 'data', challenge)
-                    verify = supabase.auth.mfa.verify(
-                        factor_id=st.session_state.mfa_id,
-                        challenge_id=c_data.id,
-                        code=otp_code
-                    )
-                    st.success("MFA Active!")
+                    # Use the challenge ID to verify the OTP
+                    verify = supabase.auth.mfa.verify({
+                        "factor_id": st.session_state.mfa_id,
+                        "challenge_id": challenge.id,
+                        "code": otp_code
+                    })
+                    st.success("MFA Active! Your account is now secured.")
                     del st.session_state.qr_code
                 except Exception as e:
                     st.error(f"Verification Error: {e}")

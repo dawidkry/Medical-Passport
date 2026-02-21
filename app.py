@@ -95,23 +95,30 @@ def main_dashboard():
             
             if st.button("Verify & Activate"):
                 try:
-                    # 1. Create the challenge
+                    # 1. Challenge the factor
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
                     
-                    # 2. Extract the challenge ID carefully
-                    challenge_id = getattr(challenge, 'id', None)
-                    
-                    # 3. Verify using the challenge ID and the OTP code
-                    # Passing them as separate arguments to avoid the 'str' object error
-                    client.auth.mfa.verify(
-                        factor_id=st.session_state.mfa_id,
-                        challenge_id=challenge_id,
-                        code=otp
-                    )
+                    # 2. Extract ID safely (Handling both Object and Dict responses)
+                    if hasattr(challenge, 'id'):
+                        c_id = challenge.id
+                    elif isinstance(challenge, dict):
+                        c_id = challenge.get('id')
+                    else:
+                        # Fallback for nested 'data' objects
+                        c_id = challenge.data.id
+
+                    # 3. Final Verification
+                    # We pass the dictionary specifically as a single object 
+                    # to match the modern 'SyncGoTrueClient' requirements
+                    client.auth.mfa.verify({
+                        "factor_id": st.session_state.mfa_id,
+                        "challenge_id": c_id,
+                        "code": str(otp)
+                    })
                     
                     st.success("✅ MFA Fully Activated!")
                     st.balloons()
-                    # Clean up session state
+                    # Clean up
                     st.session_state.pop('qr_code', None)
                     st.session_state.pop('mfa_secret', None)
                 except Exception as e:

@@ -28,10 +28,14 @@ def secure_auth_system():
         
         if st.button("Log In", use_container_width=True):
             try:
-                supabase.auth.sign_in_with_password({"email": email, "password": password})
-                st.session_state.authenticated = True
-                st.session_state.user_email = email
-                st.rerun()
+                # Sign in and capture the session
+                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if res.session:
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.rerun()
+                else:
+                    st.error("Login successful but no session found. Please check email confirmation.")
             except Exception as e:
                 st.error(f"Login failed: {e}")
 
@@ -63,6 +67,8 @@ def main_dashboard():
     page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
     
     if st.sidebar.button("Log Out", use_container_width=True):
+        # Sign out from Supabase properly
+        supabase.auth.sign_out()
         st.session_state.authenticated = False
         st.session_state.user_email = ""
         st.rerun()
@@ -76,35 +82,40 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
+        # --- VERIFY SESSION STILL EXISTS ---
+        session = supabase.auth.get_session()
+        if not session:
+            st.error("🚨 Your Auth Session has expired or is missing.")
+            st.info("Please Log Out and Log In again to refresh your security token.")
+            return
+
         # Check for existing factors
         try:
             factors_res = supabase.auth.mfa.list_factors()
-            # Handle the response which might be a list directly or an object with an 'all' attribute
             factors = getattr(factors_res, 'all', factors_res if isinstance(factors_res, list) else [])
             if factors:
                 st.warning(f"Active Factor Found: {factors[0].friendly_name}")
                 if st.button("Reset MFA (Unenroll)"):
                     supabase.auth.mfa.unenroll(factors[0].id)
-                    st.success("MFA factor removed.")
+                    st.success("Factor removed.")
                     st.rerun()
         except:
             pass
 
         if st.button("Initialize 2FA Enrollment"):
             try:
-                # The "One-Vial" approach: Passing exactly ONE dictionary as the positional argument
-                params = {
+                # Use a dictionary to pass parameters as a single positional argument
+                enroll = supabase.auth.mfa.enroll({
                     "factor_type": "totp",
                     "friendly_name": "Medical Passport"
-                }
-                enroll = supabase.auth.mfa.enroll(params)
+                })
                 
-                # Handling the return object (Pydantic style)
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
                 st.rerun()
             except Exception as e:
                 st.error(f"Enrollment Error: {e}")
+                st.info("Tip: Try logging out and back in. This often fixes 'Session Missing' errors.")
 
         if 'qr_code' in st.session_state:
             st.info("Scan with Microsoft Authenticator:")
@@ -114,13 +125,12 @@ def main_dashboard():
             if st.button("Verify & Activate"):
                 try:
                     challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
-                    # Use the challenge ID to verify the OTP
                     verify = supabase.auth.mfa.verify({
                         "factor_id": st.session_state.mfa_id,
                         "challenge_id": challenge.id,
                         "code": otp_code
                     })
-                    st.success("MFA Active! Your account is now secured.")
+                    st.success("MFA Active!")
                     del st.session_state.qr_code
                 except Exception as e:
                     st.error(f"Verification Error: {e}")

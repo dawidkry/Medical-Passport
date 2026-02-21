@@ -36,7 +36,6 @@ def secure_auth_system():
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
     client = create_client(URL, KEY)
-    
     try:
         client.auth.set_session(st.session_state.access_token, "")
     except Exception as e:
@@ -53,79 +52,96 @@ def main_dashboard():
     if page == "Dashboard":
         st.title("🩺 Medical Passport Dashboard")
         st.write(f"Secure session active for: {st.session_state.user_email}")
-
-    elif page == "Account Security":
-        st.title("🛡️ MFA Setup")
         
-        # Check for existing factors
+        # Security Status Check
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
-            if factors:
-                st.warning(f"Active Factor: {factors[0].friendly_name}")
-                if st.button("Disable & Reset MFA"):
-                    client.auth.mfa.unenroll(factors[0].id)
-                    st.rerun()
+            if any(f.status == 'verified' for f in factors):
+                st.success("🔒 MFA Status: Verified (High Security)")
+            else:
+                st.warning("⚠️ MFA Status: Incomplete")
         except:
             pass
 
-        if st.button("Generate 2FA QR Code"):
-            try:
-                enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
-                st.session_state.mfa_id = enroll.id
-                st.session_state.qr_code = enroll.totp.qr_code
-                st.session_state.mfa_secret = enroll.totp.secret 
-                st.rerun()
-            except Exception as e:
-                st.error(f"Security Error: {e}")
+    elif page == "Account Security":
+        st.title("🛡️ MFA Setup & Management")
+        
+        # --- FACTOR AUDIT ---
+        factors = []
+        try:
+            f_res = client.auth.mfa.list_factors()
+            factors = getattr(f_res, 'all', [])
+        except Exception as e:
+            st.error("Could not retrieve security factors.")
 
+        if factors:
+            st.info(f"The system found {len(factors)} existing security factor(s).")
+            for f in factors:
+                col_a, col_b = st.columns([3, 1])
+                col_a.write(f"**Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
+                if col_b.button("🗑️ Delete/Reset", key=f.id):
+                    try:
+                        client.auth.mfa.unenroll(f.id)
+                        st.success("Factor removed.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Reset failed: {e}")
+            
+            st.divider()
+            st.write("If the status is **'Unverified'**, delete it above and try again.")
+
+        # Only show enrollment if no factors exist
+        if not factors:
+            if st.button("Initialize New 2FA Enrollment"):
+                try:
+                    enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
+                    st.session_state.mfa_id = enroll.id
+                    st.session_state.qr_code = enroll.totp.qr_code
+                    st.session_state.mfa_secret = enroll.totp.secret 
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Enrollment Error: {e}")
+
+        # Verification UI (if we have an active enrollment in session)
         if st.session_state.get('qr_code'):
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
-                st.write("### Option 1: Scan QR")
-                st.image(st.session_state.qr_code, width=300)
+                st.write("### Scan QR")
+                st.image(st.session_state.qr_code, width=250)
             with col2:
-                st.write("### Option 2: Manual Entry")
+                st.write("### Manual Key")
                 st.code(st.session_state.get('mfa_secret', ""), language=None)
-                st.write("**Account:** Medical Passport")
-
-            st.divider()
-            otp = st.text_input("Enter 6-Digit Code from App", max_chars=6)
             
+            otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
-                    # 1. Challenge the factor
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
                     
-                    # 2. Extract ID safely (Handling both Object and Dict responses)
-                    if hasattr(challenge, 'id'):
-                        c_id = challenge.id
-                    elif isinstance(challenge, dict):
-                        c_id = challenge.get('id')
-                    else:
-                        # Fallback for nested 'data' objects
-                        c_id = challenge.data.id
+                    # Safe ID extraction
+                    if hasattr(challenge, 'id'): c_id = challenge.id
+                    elif isinstance(challenge, dict): c_id = challenge.get('id')
+                    else: c_id = challenge.data.id
 
-                    # 3. Final Verification
-                    # We pass the dictionary specifically as a single object 
-                    # to match the modern 'SyncGoTrueClient' requirements
                     client.auth.mfa.verify({
                         "factor_id": st.session_state.mfa_id,
                         "challenge_id": c_id,
                         "code": str(otp)
                     })
                     
-                    st.success("✅ MFA Fully Activated!")
+                    st.success("✅ MFA Activated!")
                     st.balloons()
-                    # Clean up
                     st.session_state.pop('qr_code', None)
                     st.session_state.pop('mfa_secret', None)
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Verification Failed: {e}")
 
 # --- 4. EXECUTION ---
 if not st.session_state.authenticated:
     secure_auth_system()
+else:
+    main_dashboard()
 else:
     main_dashboard()

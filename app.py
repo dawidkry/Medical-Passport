@@ -16,10 +16,10 @@ def secure_auth_system():
         
         col1, col2 = st.columns(2)
         with col1:
+           with col1:
             if st.button("Log In"):
-                # Logic: supabase.auth.sign_in_with_password()
-                # If 2FA enabled:
-                st.session_state.auth_state = "2fa"
+                # For now, let's bypass the 2FA screen and go straight in
+                st.session_state.authenticated = True
                 st.rerun()
         with col2:
             if st.button("Need an Account?"):

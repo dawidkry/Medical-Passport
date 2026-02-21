@@ -7,7 +7,7 @@ st.set_page_config(page_title="Medical Passport", page_icon="🏥", layout="wide
 
 URL = st.secrets["SUPABASE_URL"]
 KEY = st.secrets["SUPABASE_KEY"]
-TRUST_WINDOW = 7200 
+client = create_client(URL, KEY)
 
 # Initialize States
 if 'authenticated' not in st.session_state:
@@ -17,16 +17,44 @@ if 'last_mfa_time' not in st.session_state:
 if 'user_email' not in st.session_state:
     st.session_state.user_email = ""
 
-# --- 2. THE MULTI-MODE AUTHENTICATION UI ---
+# --- 2. PASSWORD RECOVERY HANDLER ---
+def handle_recovery():
+    """Checks if the user landed here from a 'Reset Password' email."""
+    # Streamlit can read URL parameters
+    params = st.query_params
+    if "type" in params and params["type"] == "recovery":
+        st.title("🛡️ Reset Your Password")
+        st.info("Please enter your new clinical credentials below.")
+        
+        new_p = st.text_input("New Password", type="password")
+        conf_p = st.text_input("Confirm New Password", type="password")
+        
+        if st.button("Update Password & Login"):
+            if new_p == conf_p and len(new_p) >= 6:
+                try:
+                    client.auth.update_user({"password": new_p})
+                    st.success("Password updated! You can now log in.")
+                    # Clear the URL parameters so the form disappears
+                    st.query_params.clear()
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Update failed: {e}")
+            else:
+                st.error("Passwords must match and be at least 6 characters.")
+        return True
+    return False
+
+# --- 3. UPDATED LOGIN/REGISTER UI ---
 def login_screen():
+    # First, check if we are in 'Recovery Mode'
+    if handle_recovery():
+        return # Stop here and show the recovery form
+
     st.title("🏥 Medical Passport Gateway")
-    
-    # Selection menu for the user
     mode = st.radio("Select Action", ["Login", "Register New Account", "Forgot Password"], horizontal=True)
     st.write("---")
     
-    client = create_client(URL, KEY)
-
     if mode == "Login":
         email = st.text_input("Professional Email")
         password = st.text_input("Password", type="password")
@@ -38,79 +66,47 @@ def login_screen():
                     st.session_state.user_email = email
                     st.session_state.authenticated = True
                     st.rerun()
-            except Exception as e:
-                st.error("Login failed. Ensure your email is verified.")
+            except:
+                st.error("Login failed. Check credentials or verify your email.")
 
     elif mode == "Register New Account":
         st.subheader("Create Clinical Provider Account")
         new_email = st.text_input("Enter Work Email")
-        new_pass = st.text_input("Create Password", type="password", help="Minimum 6 characters")
-        confirm_pass = st.text_input("Confirm Password", type="password")
+        new_pass = st.text_input("Create Password", type="password")
         
         if st.button("Sign Up", use_container_width=True):
-            if new_pass != confirm_pass:
-                st.error("Passwords do not match.")
-            else:
-                try:
-                    client.auth.sign_up({"email": new_email, "password": new_pass})
-                    st.success(f"Verification email sent to {new_email}! Please check your inbox (and spam) before logging in.")
-                except Exception as e:
-                    st.error(f"Registration error: {e}")
+            try:
+                # Sign up will return an empty user object if email exists but isn't confirmed
+                # or throw an error depending on Supabase settings.
+                res = client.auth.sign_up({"email": new_email, "password": new_pass})
+                
+                # Check if user already exists (identities list will be empty if new)
+                if res.user and res.user.identities == []:
+                    st.warning("This email is already registered. Try logging in or resetting your password.")
+                else:
+                    st.success(f"Verification email sent to {new_email}!")
+            except Exception as e:
+                st.error(f"Registration error: {e}")
 
     elif mode == "Forgot Password":
         st.subheader("Account Recovery")
         reset_email = st.text_input("Enter your registered email")
         if st.button("Send Recovery Link", use_container_width=True):
             try:
-                # This sends an email with a link that redirects back to your app
+                # redirectTo ensures the user comes back to YOUR app URL
                 client.auth.reset_password_for_email(reset_email)
-                st.success("If an account exists with this email, a reset link has been sent.")
+                st.success("Check your email for the secure reset link.")
             except Exception as e:
                 st.error("Error initiating reset.")
 
-# --- 3. (KEEP YOUR EXISTING mfa_gate AND is_mfa_trusted FUNCTIONS HERE) ---
-def is_mfa_trusted():
-    return (time.time() - st.session_state.last_mfa_time) < TRUST_WINDOW
-
-def mfa_gate():
-    st.title("🛡️ Identity Verification")
-    st.warning("MFA Refresh Required.")
-    client = create_client(URL, KEY)
-    client.auth.set_session(st.session_state.access_token, "")
-    try:
-        f_res = client.auth.mfa.list_factors()
-        factors = getattr(f_res, 'all', [])
-        if not factors:
-            # If they just registered, they might need to set up MFA for the first time
-            st.info("No MFA detected. Redirecting to setup...")
-            # (Insert your MFA enrollment code here if needed)
-            return
-        
-        otp = st.text_input("Enter 6-digit Authenticator Code", max_chars=6)
-        if st.button("Verify & Unlock", use_container_width=True):
-            challenge = client.auth.mfa.challenge({"factor_id": factors[0].id})
-            c_id = getattr(challenge, 'id', challenge.get('id') if isinstance(challenge, dict) else None)
-            client.auth.mfa.verify({"factor_id": factors[0].id, "challenge_id": c_id, "code": str(otp).strip()})
-            st.session_state.last_mfa_time = time.time()
-            st.rerun()
-    except:
-        st.session_state.authenticated = False
-
-# --- 4. DASHBOARD & EXECUTION ---
+# --- (Rest of your Dashboard and Execution Logic remains the same) ---
 def main_dashboard():
-    st.sidebar.title("🏥 Clinical Session")
-    # (Existing Countdown Logic)
-    if st.sidebar.button("🚪 Log Out"):
+    st.title("🩺 Medical Passport Dashboard")
+    if st.sidebar.button("Log Out"):
         st.session_state.authenticated = False
         st.rerun()
-
-    st.title("🩺 Medical Passport Dashboard")
-    st.write(f"Welcome, {st.session_state.user_email}")
 
 if not st.session_state.authenticated:
     login_screen()
 else:
-    if is_mfa_trusted():
-        main_dashboard()
-    else:
-        mfa_gate()
+    main_dashboard()

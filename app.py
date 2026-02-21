@@ -1,102 +1,102 @@
 import streamlit as st
 from supabase import create_client, Client
 
-# --- 1. SECURE CLIENT INITIALIZATION ---
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    # We disable session persistence to handle it manually ourselves
-    return create_client(url, key)
-
-supabase = get_supabase_client()
+# --- 1. CONFIGURATION ---
+URL = st.secrets["SUPABASE_URL"]
+KEY = st.secrets["SUPABASE_KEY"]
 
 st.set_page_config(page_title="Medical Passport", page_icon="🏥", layout="wide")
 
 # Initialize Session States
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
-if 'user_email' not in st.session_state:
-    st.session_state.user_email = ""
 if 'access_token' not in st.session_state:
     st.session_state.access_token = None
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = ""
 
 # --- 2. AUTHENTICATION SYSTEM ---
 def secure_auth_system():
     st.title("🏥 Medical Passport Gateway")
-    st.markdown("---")
-    
     email = st.text_input("Professional Email")
     password = st.text_input("Password", type="password")
     
     if st.button("Log In", use_container_width=True):
+        temp_client = create_client(URL, KEY)
         try:
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            res = temp_client.auth.sign_in_with_password({"email": email, "password": password})
             if res.session:
-                # WE SAVE THE TOKEN MANUALLY
                 st.session_state.access_token = res.session.access_token
                 st.session_state.authenticated = True
                 st.session_state.user_email = email
                 st.rerun()
         except Exception as e:
-            st.error(f"Login Error: {e}")
+            st.error(f"Login failed: {e}")
 
 # --- 3. CLINICAL DASHBOARD ---
 def main_dashboard():
-    st.sidebar.title("🧭 Navigation")
-    st.sidebar.write(f"Logged in: **{st.session_state.user_email}**")
-    
-    # EVERY TIME THE DASHBOARD RUNS, WE RE-INJECT THE TOKEN
-    if st.session_state.access_token:
-        supabase.auth.set_session(st.session_state.access_token, "")
+    # Create the authenticated client with headers
+    client = create_client(URL, KEY, options={"headers": {"Authorization": f"Bearer {st.session_state.access_token}"}})
+    client.auth.set_session(st.session_state.access_token, "")
 
+    st.sidebar.title("🧭 Navigation")
     page = st.sidebar.radio("Go to", ["Dashboard", "Account Security"])
     
-    if st.sidebar.button("🚪 Log Out", use_container_width=True):
+    if st.sidebar.button("🚪 Log Out"):
         st.session_state.authenticated = False
         st.session_state.access_token = None
         st.rerun()
 
     if page == "Dashboard":
-        st.title("🩺 Professional Medical Passport")
-        st.write("System online. Your session is manually verified.")
+        st.title("🩺 Medical Passport Dashboard")
+        st.write(f"Secure session active for: {st.session_state.user_email}")
 
     elif page == "Account Security":
         st.title("🛡️ MFA Setup")
         
         if st.button("Generate 2FA QR Code"):
             try:
-                # Force the session one last time before the sensitive call
-                supabase.auth.set_session(st.session_state.access_token, "")
+                enroll = client.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
                 
-                # Using the single dictionary parameter format
-                enroll = supabase.auth.mfa.enroll({"factor_type": "totp", "friendly_name": "MedPass"})
-                
-                # Capture the ID and QR code from the result
-                # Note: Newer versions return the object directly
                 st.session_state.mfa_id = enroll.id
                 st.session_state.qr_code = enroll.totp.qr_code
+                # WE CAPTURE THE SECRET KEY HERE FOR MANUAL ENTRY
+                st.session_state.mfa_secret = enroll.totp.secret 
                 st.rerun()
             except Exception as e:
-                st.error(f"Critical Error: {e}")
-                st.info("Technical Note: If this fails, your Supabase 'Anon' key might have restricted MFA permissions.")
+                st.error(f"Security Error: {e}")
 
         if 'qr_code' in st.session_state:
             st.divider()
-            st.image(st.session_state.qr_code, caption="Scan with Microsoft Authenticator")
+            col1, col2 = st.columns(2)
             
-            otp = st.text_input("6-Digit Code", max_chars=6)
+            with col1:
+                st.write("### Option 1: Scan QR")
+                st.image(st.session_state.qr_code, width=300)
+            
+            with col2:
+                st.write("### Option 2: Manual Entry")
+                st.info("If the image is blurry, enter this code into Microsoft Authenticator:")
+                st.code(st.session_state.mfa_secret, language=None)
+                st.write("**Account Name:** Medical Passport")
+                st.write("**Type:** Time-based (TOTP)")
+
+            st.divider()
+            otp = st.text_input("Enter 6-Digit Code from App", max_chars=6)
+            
             if st.button("Verify & Activate"):
                 try:
-                    # Final verification step
-                    challenge = supabase.auth.mfa.challenge(st.session_state.mfa_id)
-                    supabase.auth.mfa.verify({
+                    challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
+                    client.auth.mfa.verify({
                         "factor_id": st.session_state.mfa_id,
                         "challenge_id": challenge.id,
                         "code": otp
                     })
                     st.success("✅ MFA Activated!")
+                    # Cleanup session state after success
                     del st.session_state.qr_code
+                    if 'mfa_secret' in st.session_state:
+                        del st.session_state.mfa_secret
                 except Exception as e:
                     st.error(f"Verification Failed: {e}")
 

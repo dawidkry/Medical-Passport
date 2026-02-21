@@ -50,7 +50,7 @@ def main_dashboard():
 
     if page == "Dashboard":
         st.title("🩺 Medical Passport Dashboard")
-        st.write(f"Secure session active for: {st.session_state.user_email}")
+        st.write(f"Logged in as: **{st.session_state.user_email}**")
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
@@ -63,6 +63,8 @@ def main_dashboard():
 
     elif page == "Account Security":
         st.title("🛡️ MFA Setup & Management")
+        
+        # --- FACTOR LIST & UNENROLL ---
         factors = []
         try:
             f_res = client.auth.mfa.list_factors()
@@ -75,10 +77,16 @@ def main_dashboard():
                 col_a, col_b = st.columns([3, 1])
                 col_a.write(f"**Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
                 if col_b.button("🗑️ Delete", key=f.id):
-                    client.auth.mfa.unenroll(f.id)
-                    st.rerun()
+                    try:
+                        # FIX: Pass as a dictionary, not a raw string
+                        client.auth.mfa.unenroll({"factor_id": f.id})
+                        st.success("Factor removed.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Unenrollment failed: {e}")
             st.divider()
 
+        # --- ENROLLMENT ---
         if not factors:
             if st.button("Initialize New 2FA Enrollment"):
                 try:
@@ -90,20 +98,34 @@ def main_dashboard():
                 except Exception as e:
                     st.error(f"Enrollment Error: {e}")
 
+        # --- VERIFICATION ---
         if st.session_state.get('qr_code'):
             st.divider()
             c1, c2 = st.columns(2)
             with c1:
                 st.image(st.session_state.qr_code, width=250)
             with c2:
+                st.info("Manual Key:")
                 st.code(st.session_state.get('mfa_secret', ""), language=None)
             
             otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
+                    # 1. Challenge
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
-                    c_id = getattr(challenge, 'id', getattr(challenge, 'data', challenge).id if not hasattr(challenge, 'id') else None)
-                    client.auth.mfa.verify({"factor_id": st.session_state.mfa_id, "challenge_id": c_id, "code": str(otp)})
+                    
+                    # 2. Extract ID safely
+                    if hasattr(challenge, 'id'): c_id = challenge.id
+                    elif isinstance(challenge, dict): c_id = challenge.get('id')
+                    else: c_id = challenge.data.id
+
+                    # 3. Verify (Using the dictionary format)
+                    client.auth.mfa.verify({
+                        "factor_id": st.session_state.mfa_id, 
+                        "challenge_id": c_id, 
+                        "code": str(otp)
+                    })
+                    
                     st.success("✅ MFA Activated!")
                     st.balloons()
                     st.session_state.pop('qr_code', None)

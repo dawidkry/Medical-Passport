@@ -64,28 +64,23 @@ def main_dashboard():
     elif page == "Account Security":
         st.title("🛡️ MFA Setup & Management")
         
-        # --- FACTOR AUDIT ---
         factors = []
         try:
             f_res = client.auth.mfa.list_factors()
             factors = getattr(f_res, 'all', [])
         except:
-            st.error("Could not retrieve factors.")
+            pass
 
         if factors:
             for f in factors:
                 col_a, col_b = st.columns([3, 1])
-                status_icon = "✅" if f.status == 'verified' else "⏳"
-                col_a.write(f"{status_icon} **Name:** {f.friendly_name} | **Status:** {f.status.upper()}")
+                status = "✅ Verified" if f.status == 'verified' else "⏳ Pending"
+                col_a.write(f"**Factor:** {f.friendly_name} | **Status:** {status}")
                 if col_b.button("🗑️ Reset", key=f.id):
-                    try:
-                        client.auth.mfa.unenroll({"factor_id": f.id})
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Reset failed: {e}")
+                    client.auth.mfa.unenroll({"factor_id": f.id})
+                    st.rerun()
             st.divider()
 
-        # --- ENROLLMENT ---
         if not factors:
             if st.button("Initialize New 2FA Enrollment"):
                 try:
@@ -97,7 +92,6 @@ def main_dashboard():
                 except Exception as e:
                     st.error(f"Enrollment Error: {e}")
 
-        # --- VERIFICATION ---
         if st.session_state.get('qr_code'):
             st.divider()
             c1, c2 = st.columns(2)
@@ -110,24 +104,27 @@ def main_dashboard():
             otp = st.text_input("Enter 6-Digit Code", max_chars=6)
             if st.button("Verify & Activate"):
                 try:
-                    # 1. Generate the challenge
+                    # 1. Challenge
                     challenge = client.auth.mfa.challenge(st.session_state.mfa_id)
                     
-                    # 2. Extract Challenge ID (Universal extraction)
-                    c_id = getattr(challenge, 'id', None)
-                    if not c_id and isinstance(challenge, dict):
-                        c_id = challenge.get('id')
+                    # 2. Extract ID with maximum redundancy
+                    # Some versions return an object, some a dict, some a string
+                    c_id = None
+                    if hasattr(challenge, 'id'): c_id = challenge.id
+                    elif isinstance(challenge, dict): c_id = challenge.get('id')
+                    elif isinstance(challenge, str): c_id = challenge
                     
-                    # 3. Final Verification Payload
-                    # This structure is designed to avoid the 'str' object attribute error
-                    verification_data = {
-                        "factor_id": str(st.session_state.mfa_id),
-                        "challenge_id": str(c_id),
-                        "code": str(otp).strip()
-                    }
-                    
-                    # Pass the dictionary as the single positional argument
-                    client.auth.mfa.verify(verification_data)
+                    if not c_id:
+                        st.error("Could not generate a security challenge. Please try resetting.")
+                        return
+
+                    # 3. VERIFY USING EXPLICIT KEYWORDS
+                    # This is the "Universal" call that avoids the 'str' object error
+                    client.auth.mfa.verify(
+                        factor_id=str(st.session_state.mfa_id),
+                        challenge_id=str(c_id),
+                        code=str(otp).strip()
+                    )
                     
                     st.success("✅ MFA Fully Activated!")
                     st.balloons()

@@ -12,29 +12,41 @@ client = create_client(URL, KEY)
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
-# --- 2. RECOVERY HANDLER ---
+# --- 2. THE RECOVERY HANDLER (STRENGTHENED) ---
 def handle_recovery():
+    # Capture URL parameters
     params = st.query_params
-    # We check for 'type=recovery' which we manually append in the redirect
+    
+    # Check if we are in recovery mode
     if params.get("type") == "recovery":
         st.title("🛡️ Reset Your Password")
-        new_p = st.text_input("New Password", type="password")
-        conf_p = st.text_input("Confirm New Password", type="password")
+        st.info("Your identity has been verified via email. Please set your new password.")
         
-        if st.button("Update Password"):
+        new_p = st.text_input("New Password", type="password", key="reset_p1")
+        conf_p = st.text_input("Confirm New Password", type="password", key="reset_p2")
+        
+        if st.button("Update Password", use_container_width=True):
             if new_p == conf_p and len(new_p) >= 6:
                 try:
-                    # When clicking a reset link, Supabase creates a temporary session
-                    # so we can call update_user immediately.
-                    client.auth.update_user({"password": new_p})
-                    st.success("Password updated! Redirecting to login...")
-                    time.sleep(2)
-                    st.query_params.clear() 
-                    st.rerun()
+                    # THE FIX: We ensure we are using the current session 
+                    # that was established by clicking the email link.
+                    res = client.auth.update_user({"password": new_p})
+                    
+                    if res:
+                        st.success("✅ Password updated! Redirecting to login...")
+                        st.balloons()
+                        time.sleep(3)
+                        # Clear URL and reset state
+                        st.query_params.clear()
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Update failed: {e}")
+                    # If the session expired, we provide a clear path back
+                    st.error(f"Session Expired: {e}")
+                    if st.button("Request New Link"):
+                        st.query_params.clear()
+                        st.rerun()
             else:
-                st.error("Passwords must match (min 6 chars).")
+                st.error("Passwords must match and be at least 6 characters.")
         return True
     return False
 
@@ -62,16 +74,14 @@ def login_screen():
         reset_email = st.text_input("Email")
         if st.button("Send Reset Link"):
             try:
-                # This 'triage' step ensures the user comes back to the right place
-                # If running locally, it uses localhost. If on cloud, it uses your URL.
-                # Use st.navigation or hardcode your production URL here:
+                # IMPORTANT: Use the exact URL as configured in Supabase
                 actual_url = "https://medical-passport.streamlit.app" 
                 
                 client.auth.reset_password_for_email(
                     reset_email, 
                     options={"redirect_to": f"{actual_url}?type=recovery"}
                 )
-                st.success("Recovery link sent! Check your email.")
+                st.success("Recovery link sent! Check your inbox.")
             except Exception as e:
                 st.error(f"API Error: {e}")
 
@@ -79,7 +89,7 @@ def login_screen():
 if not st.session_state.authenticated:
     login_screen()
 else:
-    st.write("Logged In")
-    if st.button("Logout"):
+    st.title("🩺 Medical Passport Dashboard")
+    if st.sidebar.button("Logout"):
         st.session_state.authenticated = False
         st.rerun()
